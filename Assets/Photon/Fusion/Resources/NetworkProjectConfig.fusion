@@ -1,7 +1,7 @@
 {
     "Version": 1,
     "TypeId": "NetworkProjectConfig",
-    "HubMode": 0,
+    "HubMode": 2,
     "PeerMode": 0,
     "LagCompensation": {
         "Enabled": false,
@@ -97,7 +97,8 @@
     "AssembliesToWeave": [
         "Assembly-CSharp",
         "Assembly-CSharp-firstpass",
-        "Meta.XR.MultiplayerBlocks.Fusion"
+        "Meta.XR.MultiplayerBlocks.Fusion",
+        "PhotonVoice.Fusion"
     ],
     "UseSerializableDictionary": true,
     "NullChecksForNetworkedProperties": true,
