@@ -5,6 +5,7 @@
 
 #if UNITY_EDITOR
 using UnityEngine;
+using UnityEngine.Networking;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -281,11 +282,11 @@ namespace Sketchfab
 
 		public void HandleRequestResponse()
 		{
-			WWW www = _publisher.getResponse();
+			UnityWebRequest www = _publisher.getResponse();
 
 			if (www == null)
 			{
-				Debug.LogError("Request is empty (WWW object is null)");
+				Debug.LogError("Request is empty (UnityWebRequest object is null)");
 				return;
 			}
 
@@ -321,15 +322,15 @@ namespace Sketchfab
 					}
 					break;
 				case ExporterState.PUBLISH_MODEL:
-					if (www.responseHeaders["STATUS"].Contains("201") == true)
+					if (www.responseCode == 201)
 					{
-						_lastModelUrl = SketchfabPlugin.Urls.modelUrl + "/" + getUrlId(www.responseHeaders);
+						_lastModelUrl = SketchfabPlugin.Urls.modelUrl + "/" + getUrlId(www.GetResponseHeader("Location"));
 						if (_uploadSuccess != null)
 							_uploadSuccess();
 					}
 					else
 					{
-						_lastError = www.responseHeaders["STATUS"];
+						_lastError = www.error ?? "HTTP " + www.responseCode;
 						if (_uploadFailed != null)
 							_uploadFailed();
 					}
@@ -353,7 +354,7 @@ namespace Sketchfab
 				//	setIdle();
 				//	break;
 				case ExporterState.USER_ACCOUNT_TYPE:
-					string accountRequest = this.jsonify(www.text);
+					string accountRequest = this.jsonify(www.downloadHandler.text);
 					if (!accountRequest.Contains("account"))
 					{
 						_lastError = "Failed to retrieve user account type";
@@ -372,7 +373,7 @@ namespace Sketchfab
 					}
 					break;
 				case ExporterState.CAN_PRIVATE:
-					string canPrivateRequest = this.jsonify(www.text);
+					string canPrivateRequest = this.jsonify(www.downloadHandler.text);
 					if (!canPrivateRequest.Contains("canProtectModels"))
 					{
 						Debug.Log("Failed to retrieve if user can private");
@@ -388,9 +389,9 @@ namespace Sketchfab
 			_state = ExporterState.IDLE;
 		}
 
-		private string getUrlId(Dictionary<string, string> responseHeaders)
+		private string getUrlId(string location)
 		{
-			return responseHeaders["LOCATION"].Split('/')[responseHeaders["LOCATION"].Split('/').Length - 1];
+			return location.Split('/')[location.Split('/').Length - 1];
 		}
 
 		public string getModelUrl()
@@ -398,9 +399,9 @@ namespace Sketchfab
 			return _lastModelUrl;
 		}
 
-		private JSONNode parseResponse(WWW www)
+		private JSONNode parseResponse(UnityWebRequest www)
 		{
-			return JSON.Parse(this.jsonify(www.text));
+			return JSON.Parse(this.jsonify(www.downloadHandler.text));
 		}
 
 		// Update is called once per frame
@@ -500,7 +501,7 @@ namespace Sketchfab
 	public class SketchfabRequest
 	{
 		bool _isDone = false;
-		public WWW www;
+		public UnityWebRequest www;
 		private string access_token = "";
 		private string uploadSource = "";
 		public delegate void RequestResponseCallback();
@@ -539,7 +540,7 @@ namespace Sketchfab
 			requestSketchfabAPI(SketchfabPlugin.Urls.oauth, parameters);
 		}
 
-		public WWW getResponse()
+		public UnityWebRequest getResponse()
 		{
 			return www;
 		}
@@ -548,7 +549,7 @@ namespace Sketchfab
 		{
 			if(www != null)
 			{
-				return 0.99f * www.uploadProgress + 0.01f * www.progress;
+				return 0.99f * www.uploadProgress + 0.01f * www.downloadProgress;
 			}
 			else
 			{
@@ -585,25 +586,14 @@ namespace Sketchfab
 
 		public void requestSketchfabAPI(string url)
 		{
-			_isDone = false;
+			UnityWebRequest request = UnityWebRequest.Get(url);
 			if (access_token.Length > 0)
-			{
-				WWWForm postForm = new WWWForm();
-				Dictionary<string, string> headers = postForm.headers;
-				if (access_token.Length > 0)
-					headers["Authorization"] = "Bearer " + access_token;
-
-				www = new WWW(url, null, headers);
-			}
-			else
-			{
-				www = new WWW(url);
-			}
+				request.SetRequestHeader("Authorization", "Bearer " + access_token);
+			sendRequest(request);
 		}
 
 		public void requestSketchfabAPI(string url, Dictionary<string, string> parameters)
 		{
-			_isDone = false;
 			WWWForm postForm = new WWWForm();
 
 
@@ -613,24 +603,14 @@ namespace Sketchfab
 				postForm.AddField(param, parameters[param]);
 			}
 
-			// Create and send request
-			if(access_token.Length > 0 )
-			{
-				Dictionary<string, string> headers = postForm.headers;
-				if (access_token.Length > 0)
-					headers["Authorization"] = "Bearer " + access_token;
-
-				www = new WWW(url, postForm.data, headers);
-			}
-			else
-			{
-				www = new WWW(url, postForm);
-			}
+			UnityWebRequest request = UnityWebRequest.Post(url, postForm);
+			if (access_token.Length > 0)
+				request.SetRequestHeader("Authorization", "Bearer " + access_token);
+			sendRequest(request);
 		}
 
 		public void requestSketchfabAPI(string url, Dictionary<string, string> parameters, byte[] data, string fileName = "")
 		{
-			_isDone = false;
 			WWWForm postForm = new WWWForm();
 			// Set parameters
 			foreach (string param in parameters.Keys)
@@ -647,11 +627,18 @@ namespace Sketchfab
 				postForm.AddBinaryData("modelFile", data, fileName, "application/zip");
 			}
 
-			Dictionary<string, string> headers = postForm.headers;
-			headers["Authorization"] = "Bearer " + access_token;
+			UnityWebRequest request = UnityWebRequest.Post(url, postForm);
+			request.SetRequestHeader("Authorization", "Bearer " + access_token);
+			sendRequest(request);
+		}
 
-			// Create and send request
-			www = new WWW(url, postForm.data, headers);
+		private void sendRequest(UnityWebRequest request)
+		{
+			if (www != null)
+				www.Dispose();
+			_isDone = false;
+			www = request;
+			www.SendWebRequest();
 		}
 	}
 }
