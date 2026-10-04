@@ -7,7 +7,7 @@ using UnityEngine.Rendering.Universal;
 
 namespace Bombanana.BlindVision
 {
-    /// <summary>URP 17 Render Graph pass. Uses geometry buffers, never the scene color.</summary>
+    /// <summary>Draw an object mask, then compose BlindVision from depth, normals, and the mask.</summary>
     public sealed class BlindVisionRendererFeature : ScriptableRendererFeature
     {
         [Header("Shaders")]
@@ -16,7 +16,7 @@ namespace Bombanana.BlindVision
         [Header("Object masks")]
         public LayerMask mechanismLayers;
         public LayerMask handLayers;
-        [Header("Hand sphere")]
+        [Header("Hand spheres")]
         [Min(0.01f)] public float revealRadius = 0.3f;
         [Tooltip("Approximate white boundary width in screen pixels.")]
         [Range(0.5f, 4f)] public float revealBorderWidth = 1.5f;
@@ -28,35 +28,43 @@ namespace Bombanana.BlindVision
         [Range(0f, 1f)] public float environmentEdgeIntensity = 0.12f;
         [Range(0f, 1f)] public float edgeIntensity = 0.65f;
         [Min(0.1f)] public float maxVisibleDistance = 8f;
-        Material material;
+        Material visionMaterial;
         Material maskMaterial;
         BlindPass pass;
         bool warned;
-        Vector3 handPosition;
-        bool hasHandPosition;
+        Vector3? leftHandPosition;
+        Vector3? rightHandPosition;
 
-        /// <summary>Call from the existing hand tracking script each frame, before this camera renders.</summary>
-        public void SetHandPosition(Vector3 position) { handPosition = position; hasHandPosition = true; }
-        public void ClearHandPosition() => hasHandPosition = false;
+        /// <summary>Submit both world positions before camera rendering. Null disables that hand.</summary>
+        public void SetHandPositions(Vector3? left, Vector3? right)
+        {
+            leftHandPosition = left;
+            rightHandPosition = right;
+        }
+
+        public void ClearHandPositions() => SetHandPositions(null, null);
 
         public override void Create()
         {
-            CoreUtils.Destroy(material);
-            CoreUtils.Destroy(maskMaterial);
-            material = shader != null ? CoreUtils.CreateEngineMaterial(shader) : null;
+            // Create one material for each shader used by this feature.
+            Dispose(true);
+            warned = false;
+            visionMaterial = shader != null ? CoreUtils.CreateEngineMaterial(shader) : null;
             maskMaterial = maskShader != null ? CoreUtils.CreateEngineMaterial(maskShader) : null;
-            pass = new BlindPass(material, maskMaterial, this);
+            pass = new BlindPass(this);
         }
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
+            // Apply only to Game base cameras; skip Scene View and Overlay cameras.
             Camera camera = renderingData.cameraData.camera;
             if (camera.cameraType != CameraType.Game ||
                 renderingData.cameraData.renderType != CameraRenderType.Base)
                 return;
 
             var graphSettings = GraphicsSettings.GetRenderPipelineSettings<RenderGraphSettings>();
-            if (material == null || maskMaterial == null || (graphSettings != null && graphSettings.enableRenderCompatibilityMode))
+            bool compatibilityMode = graphSettings != null && graphSettings.enableRenderCompatibilityMode;
+            if (visionMaterial == null || maskMaterial == null || compatibilityMode)
             {
                 if (!warned)
                     Debug.LogError("Blind Vision requires its two shaders and Render Graph (disable Compatibility Mode).", this);
@@ -69,42 +77,62 @@ namespace Bombanana.BlindVision
 
         protected override void Dispose(bool disposing)
         {
-            CoreUtils.Destroy(material);
+            CoreUtils.Destroy(visionMaterial);
             CoreUtils.Destroy(maskMaterial);
         }
 
         sealed class BlindPass : ScriptableRenderPass
         {
-            readonly Material material;
-            readonly Material maskMaterial;
-            static readonly List<ShaderTagId> Tags = new List<ShaderTagId>
+            // Pass indices in BlindVisionMask.shader.
+            const int MechanismMaskPass = 0;
+            const int HandMaskPass = 1;
+
+            // Cache shader property IDs used by the fullscreen draw.
+            static readonly int BlitScaleBiasId = Shader.PropertyToID("_BlitScaleBias");
+            static readonly int EdgeWidthId = Shader.PropertyToID("_EdgeWidth");
+            static readonly int DepthThresholdId = Shader.PropertyToID("_DepthThreshold");
+            static readonly int NormalThresholdId = Shader.PropertyToID("_NormalThreshold");
+            static readonly int EdgeIntensityId = Shader.PropertyToID("_EdgeIntensity");
+            static readonly int BackgroundIntensityId = Shader.PropertyToID("_BackgroundIntensity");
+            static readonly int EnvironmentEdgeIntensityId = Shader.PropertyToID("_EnvironmentEdgeIntensity");
+            static readonly int MaxVisibleDistanceId = Shader.PropertyToID("_MaxVisibleDistance");
+            static readonly int RevealRadiusId = Shader.PropertyToID("_RevealRadius");
+            static readonly int RevealBorderWidthId = Shader.PropertyToID("_RevealBorderWidth");
+            static readonly int LeftHandId = Shader.PropertyToID("_LeftHand");
+            static readonly int RightHandId = Shader.PropertyToID("_RightHand");
+            static readonly int PixelSizeId = Shader.PropertyToID("_PixelSize");
+            static readonly int ObjectMaskId = Shader.PropertyToID("_BlindObjectMask");
+            static readonly List<ShaderTagId> ShaderPassTags = new List<ShaderTagId>
             {
                 new ShaderTagId("UniversalForward"), new ShaderTagId("UniversalForwardOnly"),
                 new ShaderTagId("SRPDefaultUnlit")
             };
             readonly BlindVisionRendererFeature settings;
 
-            sealed class PassData
+            // GPU representation: xyz is the world position; w is the active flag.
+            static Vector4 EncodeHand(Vector3? position) => position is Vector3 value
+                ? new Vector4(value.x, value.y, value.z, 1) : Vector4.zero;
+
+            sealed class CompositePassData
             {
                 public Material material;
-                public MaterialPropertyBlock properties;
+                // RenderGraph pools this data; keep a parameter snapshot for each recorded camera.
+                public readonly MaterialPropertyBlock parameters = new MaterialPropertyBlock();
                 public TextureHandle mask;
             }
 
-            sealed class MaskData
+            sealed class MaskPassData
             {
-                public RendererListHandle mechanisms;
-                public RendererListHandle hands;
+                public RendererListHandle mechanismRenderers;
+                public RendererListHandle handRenderers;
             }
 
-            public BlindPass(Material material, Material maskMaterial, BlindVisionRendererFeature settings)
+            public BlindPass(BlindVisionRendererFeature settings)
             {
-                this.material = material;
-                this.maskMaterial = maskMaterial;
                 this.settings = settings;
                 renderPassEvent = RenderPassEvent.BeforeRenderingPostProcessing;
                 ConfigureInput(ScriptableRenderPassInput.Depth | ScriptableRenderPassInput.Normal);
-                // URP handles camera viewport / XR target layout when resolving this intermediate.
+                // Let URP handle the intermediate target, camera viewport, and XR layout.
                 requiresIntermediateTexture = true;
             }
 
@@ -115,6 +143,17 @@ namespace Bombanana.BlindVision
                 if (!resources.cameraDepthTexture.IsValid() || !resources.cameraNormalsTexture.IsValid())
                     return;
 
+                // 1. Mask shader writes object categories and button states to a temporary texture.
+                var objectMask = RecordObjectMask(graph, frameData);
+                // 2. Vision shader reads the mask, depth, and normals to produce the final image.
+                RecordComposite(graph, resources, cameraData, objectMask);
+            }
+
+            TextureHandle RecordObjectMask(RenderGraph graph, ContextContainer frameData)
+            {
+                var resources = frameData.Get<UniversalResourceData>();
+                var cameraData = frameData.Get<UniversalCameraData>();
+                // Screen-aligned data texture: R = mechanism, G = hand, B = button state.
                 var maskDescriptor = graph.GetTextureDesc(resources.activeColorTexture);
                 maskDescriptor.name = "Blind Vision Object Mask";
                 maskDescriptor.colorFormat = GraphicsFormat.R8G8B8A8_UNorm;
@@ -126,61 +165,85 @@ namespace Bombanana.BlindVision
                 var mask = graph.CreateTexture(maskDescriptor);
                 var rendering = frameData.Get<UniversalRenderingData>();
                 var lights = frameData.Get<UniversalLightData>();
-                var drawing = RenderingUtils.CreateDrawingSettings(Tags, rendering, cameraData,
+                var drawing = RenderingUtils.CreateDrawingSettings(ShaderPassTags, rendering, cameraData,
                     lights, cameraData.defaultOpaqueSortFlags);
-                drawing.overrideMaterial = maskMaterial;
-                drawing.overrideMaterialPassIndex = 0;
+                drawing.overrideMaterial = settings.maskMaterial;
+                // Filter by original opaque queue and GameObject layer, then draw with the mask material.
+                drawing.overrideMaterialPassIndex = MechanismMaskPass;
                 var mechanisms = graph.CreateRendererList(new RendererListParams(rendering.cullResults,
                     drawing, new FilteringSettings(RenderQueueRange.opaque, settings.mechanismLayers.value)));
-                drawing.overrideMaterialPassIndex = 1;
+                drawing.overrideMaterialPassIndex = HandMaskPass;
                 var hands = graph.CreateRendererList(new RendererListParams(rendering.cullResults,
                     drawing, new FilteringSettings(RenderQueueRange.opaque, settings.handLayers.value)));
-                using (var builder = graph.AddRasterRenderPass<MaskData>("Blind Vision Visible Object Mask", out var data))
+                using (var builder = graph.AddRasterRenderPass<MaskPassData>("Blind Vision Visible Object Mask", out var data))
                 {
-                    data.mechanisms = mechanisms;
-                    data.hands = hands;
+                    data.mechanismRenderers = mechanisms;
+                    data.handRenderers = hands;
                     builder.UseRendererList(mechanisms);
                     builder.UseRendererList(hands);
-                    // The mask shader compares against visible scene depth, including unmarked occluders.
+                    // Mask shader rejects hidden surfaces using scene depth.
                     builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
+                    // Fragment outputs are written into this texture, not the camera image.
                     builder.SetRenderAttachment(mask, 0, AccessFlags.Write);
-                    builder.SetRenderFunc((MaskData value, RasterGraphContext context) =>
+                    builder.SetRenderFunc((MaskPassData value, RasterGraphContext context) =>
                     {
-                        context.cmd.DrawRendererList(value.mechanisms);
-                        context.cmd.DrawRendererList(value.hands);
+                        // Each renderer's property block supplies its own _BlindButtonState.
+                        context.cmd.DrawRendererList(value.mechanismRenderers);
+                        context.cmd.DrawRendererList(value.handRenderers);
                     });
                 }
+                return mask;
+            }
 
-                // Snapshot parameters per camera; deferred execution cannot pick up another camera's settings.
-                var properties = new MaterialPropertyBlock();
-                properties.SetVector("_BlitScaleBias", new Vector4(1, 1, 0, 0));
-                properties.SetVector("_EdgeSettings", new Vector4(settings.edgeWidth, settings.depthThreshold,
-                    settings.normalThreshold, settings.edgeIntensity));
-                properties.SetVector("_VisionSettings", new Vector4(settings.backgroundIntensity,
-                    settings.maxVisibleDistance, settings.revealRadius, settings.hasHandPosition ? 1 : 0));
-                properties.SetVector("_RevealSettings", new Vector4(settings.environmentEdgeIntensity, settings.revealBorderWidth, 0, 0));
-                properties.SetVector("_RevealPosition", settings.handPosition);
-                var descriptor = cameraData.cameraTargetDescriptor;
-                properties.SetVector("_VisionTexelSize", new Vector4(1f / descriptor.width,
-                    1f / descriptor.height, descriptor.width, descriptor.height));
-
-                using (var builder = graph.AddRasterRenderPass<PassData>("BOMBANANA Blind Vision", out var data))
+            void RecordComposite(RenderGraph graph, UniversalResourceData resources,
+                UniversalCameraData cameraData, TextureHandle objectMask)
+            {
+                using (var builder = graph.AddRasterRenderPass<CompositePassData>("BOMBANANA Blind Vision", out var data))
                 {
-                    data.material = material;
-                    data.properties = properties;
-                    data.mask = mask;
-                    builder.UseTexture(mask, AccessFlags.Read);
+                    data.material = settings.visionMaterial;
+                    data.mask = objectMask;
+                    SetShaderParameters(data.parameters, cameraData.cameraTargetDescriptor);
+
+                    // Declare input dependencies so RenderGraph completes the mask before this draw.
+                    builder.UseTexture(objectMask, AccessFlags.Read);
                     builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
                     builder.UseTexture(resources.cameraNormalsTexture, AccessFlags.Read);
-                    // No scene-color sampling, so an overwrite needs no copy or read/write color alias.
+                    // Write the final image directly; the shader does not sample scene color.
                     builder.SetRenderAttachment(resources.activeColorTexture, 0, AccessFlags.Write);
-                    builder.SetRenderFunc((PassData value, RasterGraphContext context) =>
+                    builder.SetRenderFunc((CompositePassData value, RasterGraphContext context) =>
                     {
-                        value.properties.SetTexture("_BlindObjectMask", (RTHandle)value.mask);
+                        // Bind the existing GPU texture to the shader's _BlindObjectMask input.
+                        value.parameters.SetTexture(ObjectMaskId, (RTHandle)value.mask);
+                        // A fullscreen triangle runs the vision fragment shader across the image.
                         context.cmd.DrawProcedural(Matrix4x4.identity, value.material, 0,
-                            MeshTopology.Triangles, 3, 1, value.properties);
+                            MeshTopology.Triangles, 3, 1, value.parameters);
                     });
                 }
+            }
+
+            void SetShaderParameters(MaterialPropertyBlock parameters, RenderTextureDescriptor cameraTarget)
+            {
+                parameters.Clear();
+                parameters.SetVector(BlitScaleBiasId, new Vector4(1, 1, 0, 0));
+
+                // Outline and brightness settings.
+                parameters.SetFloat(EdgeWidthId, settings.edgeWidth);
+                parameters.SetFloat(DepthThresholdId, settings.depthThreshold);
+                parameters.SetFloat(NormalThresholdId, settings.normalThreshold);
+                parameters.SetFloat(EdgeIntensityId, settings.edgeIntensity);
+                parameters.SetFloat(BackgroundIntensityId, settings.backgroundIntensity);
+                parameters.SetFloat(EnvironmentEdgeIntensityId, settings.environmentEdgeIntensity);
+                parameters.SetFloat(MaxVisibleDistanceId, settings.maxVisibleDistance);
+
+                // Hand reveal range and world positions.
+                parameters.SetFloat(RevealRadiusId, settings.revealRadius);
+                parameters.SetFloat(RevealBorderWidthId, settings.revealBorderWidth);
+                parameters.SetVector(LeftHandId, EncodeHand(settings.leftHandPosition));
+                parameters.SetVector(RightHandId, EncodeHand(settings.rightHandPosition));
+
+                // UV size of one screen pixel, used for outlines and reveal borders.
+                parameters.SetVector(PixelSizeId, new Vector4(1f / cameraTarget.width,
+                    1f / cameraTarget.height, 0, 0));
             }
         }
     }

@@ -14,7 +14,6 @@ namespace Bombanana.BlindVision
         void OnEnable()
         {
             surface = GetComponent<Renderer>();
-            properties ??= new MaterialPropertyBlock();
             SetRequired(required);
         }
 

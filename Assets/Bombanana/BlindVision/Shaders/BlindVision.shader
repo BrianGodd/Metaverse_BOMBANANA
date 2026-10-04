@@ -18,16 +18,57 @@ Shader "BOMBANANA/BlindVision"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareNormalsTexture.hlsl"
 
-            float4 _EdgeSettings; // width, relative depth threshold, normal threshold, intensity
-            float4 _VisionSettings; // background, distance, reveal radius, reveal enabled
-            float4 _RevealSettings; // environment intensity, boundary width in pixels
-            float4 _RevealPosition;
-            float4 _VisionTexelSize;
-            TEXTURE2D_X(_BlindObjectMask);
+            float _EdgeWidth;
+            float _DepthThreshold;
+            float _NormalThreshold;
+            float _EdgeIntensity;
+            float _BackgroundIntensity;
+            float _EnvironmentEdgeIntensity;
+            float _MaxVisibleDistance;
+            float _RevealRadius;
+            float _RevealBorderWidth;
+            float4 _LeftHand; // xyz position, w enabled
+            float4 _RightHand;
+            float2 _PixelSize;
+            TEXTURE2D_X(_BlindObjectMask); // r: mechanism, g: hand, b: button state
 
-            float EyeDepth(float2 uv)
+            float3 WorldPosition(float2 uv, float rawDepth)
             {
-                return LinearEyeDepth(SampleSceneDepth(saturate(uv)), _ZBufferParams);
+                #if !UNITY_REVERSED_Z
+                    rawDepth = lerp(UNITY_NEAR_CLIP_VALUE, 1, rawDepth);
+                #endif
+                return ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
+            }
+
+            float HandDistance(float3 worldPosition, float4 hand)
+            {
+                return hand.w > 0 ? distance(worldPosition, hand.xyz) : 1e20;
+            }
+
+            float DetectEdges(float2 uv, float depth, float3 worldPosition, float3 normal, inout float mechanism)
+            {
+                float2 offset = _PixelSize * _EdgeWidth;
+                float depthDifference = 0;
+                float normalDifference = 0;
+                const float2 directions[4] = { float2(1,0), float2(-1,0), float2(0,1), float2(0,-1) };
+                [unroll] for (int i = 0; i < 4; i++)
+                {
+                    float2 neighbourUV = saturate(uv + directions[i] * offset);
+                    float neighbourRawDepth = SampleSceneDepth(neighbourUV);
+                    float3 neighbourNormal = SampleSceneNormals(neighbourUV);
+                    float3 displacement = WorldPosition(neighbourUV, neighbourRawDepth) - worldPosition;
+                    // Same-plane depth slopes are not edges, even at grazing view angles.
+                    float planeDifference = max(abs(dot(displacement, normal)), abs(dot(displacement, neighbourNormal)));
+                    // Retain depth outlines if neither pixel has a usable scene normal.
+                    if (max(dot(normal, normal), dot(neighbourNormal, neighbourNormal)) < 0.01)
+                        planeDifference = abs(depth - LinearEyeDepth(neighbourRawDepth, _ZBufferParams));
+                    depthDifference = max(depthDifference, planeDifference / max(depth, 0.1));
+                    normalDifference = max(normalDifference, length(normal - neighbourNormal));
+                    // Classify both sides of an object's edge as belonging to that mechanism.
+                    mechanism = max(mechanism, SAMPLE_TEXTURE2D_X(_BlindObjectMask, sampler_PointClamp, neighbourUV).r);
+                }
+                return max(smoothstep(_DepthThreshold, _DepthThreshold * 2, depthDifference),
+                    smoothstep(_NormalThreshold, _NormalThreshold * 1.5, normalDifference));
             }
 
             half4 Frag(Varyings input) : SV_Target
@@ -36,41 +77,25 @@ Shader "BOMBANANA/BlindVision"
                 float2 uv = input.texcoord;
                 float rawDepth = SampleSceneDepth(uv);
                 float depth = LinearEyeDepth(rawDepth, _ZBufferParams);
-                float3 normal = SampleSceneNormals(uv);
-                float2 offset = _VisionTexelSize.xy * _EdgeSettings.x;
-                float depthDifference = 0;
-                float normalDifference = 0;
+                float3 worldPosition = WorldPosition(uv, rawDepth);
                 float3 mask = SAMPLE_TEXTURE2D_X(_BlindObjectMask, sampler_PointClamp, uv).rgb;
-                float mechanism = mask.r;
-                const float2 directions[4] = { float2(1,0), float2(-1,0), float2(0,1), float2(0,-1) };
-                [unroll] for (int i = 0; i < 4; i++)
-                {
-                    float2 neighbourUV = saturate(uv + directions[i] * offset);
-                    depthDifference = max(depthDifference, abs(depth - EyeDepth(neighbourUV)) / max(depth, 0.1));
-                    normalDifference = max(normalDifference, length(normal - SampleSceneNormals(neighbourUV)));
-                    // Classify both sides of an object's edge as belonging to that mechanism.
-                    mechanism = max(mechanism, SAMPLE_TEXTURE2D_X(_BlindObjectMask, sampler_PointClamp, neighbourUV).r);
-                }
-                float edge = max(smoothstep(_EdgeSettings.y, _EdgeSettings.y * 2, depthDifference),
-                    smoothstep(_EdgeSettings.z, _EdgeSettings.z * 1.5, normalDifference));
-                float visible = 1 - smoothstep(_VisionSettings.y * 0.85, _VisionSettings.y, depth);
 
-                // A spatial reveal multiplies the existing edges; it never adds a filled contact glow.
-                #if !UNITY_REVERSED_Z
-                    rawDepth = lerp(UNITY_NEAR_CLIP_VALUE, 1, rawDepth);
-                #endif
-                float3 worldPosition = ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
-                float radius = _VisionSettings.z;
-                // True world-space sphere centered on the hand; all three axes affect range.
-                float rangeDistance = distance(worldPosition, _RevealPosition.xyz);
-                float reveal = step(rangeDistance, radius) * _VisionSettings.w;
-                // Thin inner boundary: only the current visible mechanism pixel may draw it.
-                // Use mask.r (not the dilated edge classification) so arcs stop at the surface.
-                // Estimate pixel size without differentiating across foreground/background depth jumps.
-                float pixelWorldSize = 2 * lerp(depth, 1, unity_OrthoParams.w) * _VisionTexelSize.y / abs(UNITY_MATRIX_P._m11);
-                float boundary = reveal * mask.r * step(radius - pixelWorldSize * _RevealSettings.y, rangeDistance);
-                float edgeIntensity = lerp(_RevealSettings.x, _EdgeSettings.w * reveal, saturate(mechanism));
-                float intensity = saturate(_VisionSettings.x + edge * visible * edgeIntensity);
+                // Geometry outlines, with mechanism classification expanded across each edge.
+                float mechanism = mask.r;
+                float edge = DetectEdges(uv, depth, worldPosition, SampleSceneNormals(uv), mechanism);
+                float visible = 1 - smoothstep(_MaxVisibleDistance * 0.85, _MaxVisibleDistance, depth);
+
+                // World-space hand reveal and its thin outer boundary.
+                // Nearest enabled hand defines the union and removes interior overlap boundaries.
+                float rangeDistance = min(HandDistance(worldPosition, _LeftHand), HandDistance(worldPosition, _RightHand));
+                float reveal = step(rangeDistance, _RevealRadius);
+                // Use the undilated mechanism mask; estimate pixel width without depth derivatives.
+                float pixelWorldSize = 2 * lerp(depth, 1, unity_OrthoParams.w) * _PixelSize.y / abs(UNITY_MATRIX_P._m11);
+                float boundary = reveal * mask.r * step(_RevealRadius - pixelWorldSize * _RevealBorderWidth, rangeDistance);
+
+                // Compose outlines, button state, boundary, then visible hands.
+                float edgeIntensity = lerp(_EnvironmentEdgeIntensity, _EdgeIntensity * reveal, saturate(mechanism));
+                float intensity = saturate(_BackgroundIntensity + edge * visible * edgeIntensity);
                 // Only explicit button state fills a surface; the flashlight itself still reveals edges.
                 float3 stateColor = lerp(float3(0.8, 0.8, 0.8), float3(1, 0.03, 0.03), step(0.75, mask.b));
                 float3 color = lerp(intensity.xxx, stateColor, step(0.25, mask.b) * reveal * visible);

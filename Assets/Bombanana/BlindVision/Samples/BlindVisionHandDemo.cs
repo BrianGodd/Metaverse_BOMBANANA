@@ -1,14 +1,17 @@
 using UnityEngine;
 using UnityEngine.Rendering.Universal;
+using UnityEngine.Serialization;
 
 namespace Bombanana.BlindVision
 {
-    /// <summary>Optional example: feeds an existing hand transform into the reveal sphere.</summary>
+    /// <summary>Optional example: feeds existing left/right hand transforms into the reveal spheres.</summary>
     [DisallowMultipleComponent]
     public sealed class BlindVisionHandDemo : MonoBehaviour
     {
         [SerializeField] UniversalRendererData blindRenderer;
-        [SerializeField] Transform hand;
+        [FormerlySerializedAs("hand")]
+        [SerializeField] Transform leftHand;
+        [SerializeField] Transform rightHand;
         BlindVisionRendererFeature feature;
 
         void OnEnable()
@@ -20,17 +23,14 @@ namespace Bombanana.BlindVision
             enabled = false;
         }
 
-        void LateUpdate()
-        {
-            if (hand != null && hand.gameObject.activeInHierarchy)
-                feature.SetHandPosition(hand.position);
-            else
-                feature.ClearHandPosition();
-        }
+        void LateUpdate() => feature.SetHandPositions(GetPosition(leftHand), GetPosition(rightHand));
+
+        static Vector3? GetPosition(Transform hand) =>
+            hand != null && hand.gameObject.activeInHierarchy ? hand.position : (Vector3?)null;
 
         void OnDisable()
         {
-            if (feature != null) feature.ClearHandPosition();
+            if (feature != null) feature.ClearHandPositions();
         }
     }
 }
