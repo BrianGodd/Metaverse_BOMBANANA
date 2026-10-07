@@ -113,3 +113,24 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Local art sources and development artifacts
+/ArtSource/
+/Tools/
+/BOMBANANA_*.md
+/Assets/Scripts/GameLoopSetup.md
+/Assets/Scripts/GameLoopSetup.md.meta
+/Assets/Animations/HandGestures/README.txt
+/Assets/Animations/HandGestures/README.txt.meta
+/Assets/BlindVision/README.txt
+/Assets/BlindVision/README.txt.meta
+/Assets/Outline/README.txt
+/Assets/Outline/README.txt.meta
+/Assets/Art/Hand/AnimationSources/
+/Assets/Art/Hand/AnimationSources.meta
+/ProjectSettings/SceneTemplateSettings.json
+
+# Meta XR input bindings generated for play mode and builds
+/RuntimeActionBindings.json
+/Assets/StreamingAssets/RuntimeActionBindings.json
+/Assets/StreamingAssets/RuntimeActionBindings.json.meta
