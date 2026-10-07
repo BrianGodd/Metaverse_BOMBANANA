@@ -8,7 +8,6 @@ namespace Bombanana.Interaction
 {
     /// <summary>Meta hand visual with explicit joint mapping and baked rotation retargeting.</summary>
     [DisallowMultipleComponent]
-    [AddComponentMenu("Bombanana/Interaction/Custom Hand Visual")]
     public sealed class CustomHandVisual : MonoBehaviour, IHandVisual
     {
         [Serializable]
