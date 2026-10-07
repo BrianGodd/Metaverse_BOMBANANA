@@ -1261,30 +1261,6 @@ PrefabInstance:
       propertyPath: m_Name
       value: '[BuildingBlock] Camera Rig'
       objectReference: {fileID: 0}
-    - target: {fileID: 934480882826864559, guid: 42068ea9689bb8a419681cebc4a099bf, type: 3}
-      propertyPath: m_Volume
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 934480883087928126, guid: 42068ea9689bb8a419681cebc4a099bf, type: 3}
-      propertyPath: m_Volume
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 2681869264454203312, guid: 42068ea9689bb8a419681cebc4a099bf, type: 3}
-      propertyPath: m_RendererIndex
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 2681869264454203312, guid: 42068ea9689bb8a419681cebc4a099bf, type: 3}
-      propertyPath: m_RenderPostProcessing
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 3850547258553941443, guid: 42068ea9689bb8a419681cebc4a099bf, type: 3}
-      propertyPath: m_Volume
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 3850547258863300946, guid: 42068ea9689bb8a419681cebc4a099bf, type: 3}
-      propertyPath: m_Volume
-      value: 1
-      objectReference: {fileID: 0}
     - target: {fileID: 7339034178829194428, guid: 42068ea9689bb8a419681cebc4a099bf, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0
@@ -2774,18 +2750,6 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 5592949782012597224, guid: fd5954bb5f88c024bb7c484ff8809e62, type: 3}
-      propertyPath: _debugFixedPattern
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 6946839342074508002, guid: fd5954bb5f88c024bb7c484ff8809e62, type: 3}
-      propertyPath: m_Resource
-      value: 
-      objectReference: {fileID: 8300000, guid: 55e38876387240edba6de107238989b6, type: 3}
-    - target: {fileID: 6946839342074508002, guid: fd5954bb5f88c024bb7c484ff8809e62, type: 3}
-      propertyPath: m_audioClip
-      value: 
-      objectReference: {fileID: 8300000, guid: 55e38876387240edba6de107238989b6, type: 3}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []

@@ -616,13 +616,13 @@ MonoBehaviour:
   m_RequiresOpaqueTextureOption: 2
   m_CameraType: 0
   m_Cameras: []
-  m_RendererIndex: 0
+  m_RendererIndex: 1
   m_VolumeLayerMask:
     serializedVersion: 2
     m_Bits: 1
   m_VolumeTrigger: {fileID: 0}
   m_VolumeFrameworkUpdateModeOption: 2
-  m_RenderPostProcessing: 0
+  m_RenderPostProcessing: 1
   m_Antialiasing: 0
   m_AntialiasingQuality: 2
   m_StopNaN: 0
@@ -4851,6 +4851,22 @@ PrefabInstance:
       propertyPath: _ovrCameraRig
       value: 
       objectReference: {fileID: 408503535697463984}
+    - target: {fileID: 6489522149390601888, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
+      propertyPath: m_Volume
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 6489522149716673073, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
+      propertyPath: m_Volume
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 7176344438770963660, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
+      propertyPath: m_Volume
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 7176344439015315549, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
+      propertyPath: m_Volume
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 7245423369569572801, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
       propertyPath: _movementStrength.m_Curve.Array.data[1].value
       value: 90

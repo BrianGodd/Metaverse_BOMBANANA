@@ -1628,6 +1628,10 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 1370445715269370261, guid: e0d8356bd49f72f4eb6ad1cd25262f37, type: 3}
+      propertyPath: _debugFixedPattern
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1370445715269370261, guid: e0d8356bd49f72f4eb6ad1cd25262f37, type: 3}
       propertyPath: '_lights.Array.data[0]'
       value: 
       objectReference: {fileID: 4279373485546256987}

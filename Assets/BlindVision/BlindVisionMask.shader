@@ -67,7 +67,8 @@ Shader "BOMBANANA/BlindVisionMask"
         Pass
         {
             Name "HandMask"
-            ZWrite Off ZTest Always Cull Back Blend One One BlendOp Max
+            // Match the two-sided hand material, including the mirrored left mesh.
+            ZWrite Off ZTest Always Cull Off Blend One One BlendOp Max
             HLSLPROGRAM
             #pragma vertex Vert
             #pragma fragment Hand
